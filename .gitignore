@@ -1,0 +1,6 @@
+.env
+*.md
+outputnotes
+csv
+input
+output
