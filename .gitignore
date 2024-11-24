@@ -1,6 +1,8 @@
 .env
 *.md
 outputnotes
-csv
+*.csv
 input
 output
+*.doc
+*.docx

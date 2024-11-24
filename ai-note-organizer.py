@@ -5,6 +5,8 @@ import argparse
 import tiktoken
 import re
 import csv
+from docx import Document
+from markdownify import markdownify as md
 from datetime import datetime
 
 def sanitize_filename(filename):
@@ -164,6 +166,71 @@ def clean_text(text):
 
     return text
 
+def convert_doc_to_md_and_get_content(file_path, out_path):
+    """
+    Converts a .doc file to a .md (Markdown) file using LibreOffice's unoconv.
+    
+    :param file_path: str, path to the .doc file
+    :return: str, path to the converted .md file
+    """
+    
+    # Get the basename of the file (filename without path)
+    file_basename = os.path.basename(file_path)
+    
+    # Construct the output file path with the .md extension
+    output_file_path = os.path.join(out_path, file_basename.replace('.doc', '.md'))
+
+    # Run unoconv to convert .doc to .md and save it to the specified output path
+    subprocess.run(['unoconv', '-f', 'md', '-o', output_file_path, file_path])
+    
+    with open(output_file_path, "r", encoding='utf-8') as f:
+        content = f.read()
+
+    return content
+
+def convert_docx_content_to_md(docx_path):
+    """
+    Reads a .docx file, extracts its content, and converts it to Markdown format.
+    Args:
+        docx_path (str): Path to the .docx file.
+    Returns:
+        str: Markdown content as a string.
+    """
+    try:
+        # Load the .docx file
+        document = Document(docx_path)
+        
+        # Extract text and convert to Markdown
+        md_content = ""
+        for paragraph in document.paragraphs:
+            if paragraph.text.strip():  # Only process non-empty paragraphs
+                md_content += md(paragraph.text + "\n\n")
+        
+        # Handle tables (optional)
+        for table in document.tables:
+            md_content += "\n" + process_table(table) + "\n"
+        
+        return md_content
+    except Exception as e:
+        print(f"Error reading .docx file: {e}")
+        return ""
+
+def process_table(table):
+    """
+    Converts a Word table to Markdown table format.
+    Args:
+        table (docx.table.Table): Table object from python-docx.
+    Returns:
+        str: Markdown table as a string.
+    """
+    md_table = []
+    for i, row in enumerate(table.rows):
+        row_data = [cell.text.strip() for cell in row.cells]
+        md_table.append("| " + " | ".join(row_data) + " |")
+        if i == 0:  # Add header separator
+            md_table.append("|" + " --- |" * len(row.cells))
+    return "\n".join(md_table)
+
 def process_txt_to_md(input_path, keep_path, junk_path):
     """
     Process a .txt file by converting it to Markdown using pandoc,
@@ -175,11 +242,22 @@ def process_txt_to_md(input_path, keep_path, junk_path):
         return
 
     # Read the original content to evaluate
-    try: 
-        with open(input_path, "r", encoding='utf-8') as f:
-            content_raw = f.read()
-    except UnicodeDecodeError as e:
-        print(f"Error reading file: {e}")
+    if input_path.endswith(".txt"):
+        try: 
+            with open(input_path, "r", encoding='utf-8') as f:
+                content_raw = f.read()
+        except UnicodeDecodeError as e:
+            print(f"Error reading file: {e}")
+    elif input_path.endswith(".docx"): 
+        try:
+            content_raw = convert_docx_content_to_md(input_path)
+            #dir_path = os.path.dirname(keep_path)
+            #content_raw = convert_doc_to_md_and_get_content(input_path, keep_path)
+    
+        except Exception as e:
+            print(f"Error reading {input_path}: {e}")
+    else:
+        print(f"Can't read file {input_path}")
 
     # Generate decision, explanation, and tags using OpenAI API
     decision, explanation, tags, num_tokens = get_tags_and_decision_from_openai(content_raw)
@@ -245,14 +323,18 @@ def process_files(input_root, output_root):
     # Process all .txt files in the input directory
     for root, _, files in os.walk(input_root):
         for file in files:
-            if file.endswith(".txt"):
+            if file.endswith(".txt") or file.endswith(".docx"):
                 try: 
-
                     input_path = os.path.normpath(os.path.join(root, file))
 
                     # strip any unncessary stuff off of the filename.
                     new_filename = re.sub(timestamp_pattern, "", file)
-                    output_file = sanitize_filename(new_filename.replace(".txt", ".md"))
+                    if(new_filename.endswith(".txt")): 
+                        new_filename = new_filename.replace(".txt", ".md")
+                    elif(new_filename.endswith(".docx")):
+                        new_filename = new_filename.replace(".docx", ".md")
+
+                    output_file = sanitize_filename(new_filename)
 
                     # Convert and process the file
                     keep_output_path = os.path.join(keep_dir, output_file)
@@ -267,6 +349,7 @@ def process_files(input_root, output_root):
                     metadata.append(return_val)
                 except Exception as e: 
                     print(f"Error looping through files. File is {file}. Exception thrown is {e}\n")
+
 
     # Output CSV of all the metadata for review
     headers = ['filename', 'decision', 'explanation', 'tags', 'num_tokens']
