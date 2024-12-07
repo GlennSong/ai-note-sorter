@@ -6,3 +6,6 @@ input
 output
 *.doc
 *.docx
+*.rtf
+*.htm
+*.html
