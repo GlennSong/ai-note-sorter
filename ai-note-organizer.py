@@ -8,6 +8,9 @@ import csv
 from docx import Document
 from markdownify import markdownify as md
 from datetime import datetime
+from win32com.client import Dispatch
+from striprtf.striprtf import rtf_to_text
+
 
 def sanitize_filename(filename):
     """
@@ -215,6 +218,55 @@ def convert_docx_content_to_md(docx_path):
         print(f"Error reading .docx file: {e}")
         return ""
 
+def convert_rtf_content_to_md(rtf_path):
+    """
+    Reads an .rtf file and converts its content to Markdown.
+    Args:
+        rtf_path (str): Path to the .rtf file.
+    Returns:
+        str: Markdown content as a string.
+    """
+    try:
+        with open(rtf_path, 'r', encoding='utf-8') as f:
+            rtf_content = f.read()
+        text_content = rtf_to_text(rtf_content)
+        return text_content
+        # md_content = text_content.replace('\n', '\n\n')  # Simple Markdown conversion
+        # return md_content
+    except Exception as e:
+        print(f"Error reading RTF file: {e}")
+        return ""
+
+def extract_doc_content(doc_path):
+    try:
+        print(f"doc_path is {doc_path}")
+        absolute_path = os.path.abspath(doc_path)
+        print("Absolute path:", absolute_path)
+
+        # Check if file exists
+        if not os.path.exists(absolute_path):
+            return f"Error: File not found at {absolute_path}"
+
+        # Start a Word application instance
+        word = Dispatch('Word.Application')
+        word.Visible = False  # Run Word in the background
+        word.DisplayAlerts = False
+
+        # Open the .doc file
+        doc = word.Documents.Open(absolute_path)
+
+        # Extract the content
+        text_content = doc.Content.Text
+
+        # Close the document and quit Word
+        doc.Close(False)
+        word.Quit()
+
+        return text_content
+    except Exception as e:
+        print(f"Error reading .doc file: {e}")
+        return ""
+
 def process_table(table):
     """
     Converts a Word table to Markdown table format.
@@ -231,7 +283,7 @@ def process_table(table):
             md_table.append("|" + " --- |" * len(row.cells))
     return "\n".join(md_table)
 
-def process_txt_to_md(input_path, keep_path, junk_path):
+def process_file_to_md(input_path, keep_path, junk_path):
     """
     Process a .txt file by converting it to Markdown using pandoc,
     determining whether to keep or trash the note, generating tags,
@@ -248,6 +300,16 @@ def process_txt_to_md(input_path, keep_path, junk_path):
                 content_raw = f.read()
         except UnicodeDecodeError as e:
             print(f"Error reading file: {e}")
+    elif input_path.endswith(".rtf"):
+        try: 
+            content_raw = convert_rtf_content_to_md(input_path)
+        except UnicodeDecodeError as e: 
+            print(f"Error reading file: {e}")
+    elif input_path.endswith(".doc"):
+        try: 
+            content_raw = extract_doc_content(input_path)
+        except UnicodeDecodeError as e: 
+            print(f"Error reading file: {e}")
     elif input_path.endswith(".docx"): 
         try:
             content_raw = convert_docx_content_to_md(input_path)
@@ -261,6 +323,12 @@ def process_txt_to_md(input_path, keep_path, junk_path):
 
     # Generate decision, explanation, and tags using OpenAI API
     decision, explanation, tags, num_tokens = get_tags_and_decision_from_openai(content_raw)
+    
+    # Use for testing purposes.
+    # decision = "trash"
+    # explanation = "testing"
+    # tags = ["test_tag"]
+    # num_tokens = 0
 
     #strip out special characters.
     content = clean_text(content_raw)
@@ -323,7 +391,7 @@ def process_files(input_root, output_root):
     # Process all .txt files in the input directory
     for root, _, files in os.walk(input_root):
         for file in files:
-            if file.endswith(".txt") or file.endswith(".docx"):
+            if file.endswith(".txt") or file.endswith(".docx") or file.endswith(".doc") or file.endswith(".rtf"):
                 try: 
                     input_path = os.path.normpath(os.path.join(root, file))
 
@@ -331,6 +399,10 @@ def process_files(input_root, output_root):
                     new_filename = re.sub(timestamp_pattern, "", file)
                     if(new_filename.endswith(".txt")): 
                         new_filename = new_filename.replace(".txt", ".md")
+                    elif(new_filename.endswith(".rtf")):
+                        new_filename = new_filename.replace(".rtf", ".md")
+                    elif(new_filename.endswith(".doc")):
+                        new_filename = new_filename.replace(".doc", ".md")
                     elif(new_filename.endswith(".docx")):
                         new_filename = new_filename.replace(".docx", ".md")
 
@@ -345,7 +417,7 @@ def process_files(input_root, output_root):
                         print(f"Skipping {output_file} as it already exists in the keep directory.")
                         continue  # Skip processing this file if it already exists in keep
 
-                    return_val = process_txt_to_md(input_path, keep_output_path, junk_output_path)
+                    return_val = process_file_to_md(input_path, keep_output_path, junk_output_path)
                     metadata.append(return_val)
                 except Exception as e: 
                     print(f"Error looping through files. File is {file}. Exception thrown is {e}\n")
